@@ -1,59 +1,63 @@
-import { useState } from "react";
 import { motion } from "framer-motion";
 
 function formatDate(date) {
   if (!date) return "";
-  const d = date.toDate ? date.toDate() : new Date(date);
+  const d = new Date(date);
   return d.toLocaleDateString("en-US", {
-    month: "long",
+    month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
 
-export default function PhotoCard({ photo, index }) {
-  const [showCaption, setShowCaption] = useState(false);
-
+export default function PhotoCard({
+  photo,
+  index,
+  colSpan,
+  rowSpan,
+  isExpanded,
+  onSelect,
+}) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-50px" }}
-      transition={{ duration: 0.5, delay: (index % 6) * 0.1 }}
-      className="relative mb-4 break-inside-avoid group cursor-pointer"
-      onClick={() => setShowCaption((prev) => !prev)}
+      layout
+      initial={{ opacity: 0, scale: 0.9 }}
+      whileInView={{ opacity: 1, scale: 1 }}
+      viewport={{ once: true, margin: "-30px" }}
+      transition={{ duration: 0.4, delay: (index % 8) * 0.05 }}
+      className="relative cursor-pointer overflow-hidden rounded-xl sm:rounded-2xl shadow-md shadow-rose-200/40"
+      style={{
+        gridColumn: `span ${colSpan}`,
+        gridRow: `span ${rowSpan}`,
+      }}
+      onClick={onSelect}
     >
-      <motion.div
-        whileHover={{ scale: 1.02 }}
-        transition={{ type: "spring", stiffness: 300, damping: 20 }}
-        className="relative overflow-hidden rounded-2xl shadow-md shadow-rose-200/50"
-      >
-        <img
-          src={photo.url}
-          alt={photo.caption || "Our memory"}
-          loading="lazy"
-          className="w-full h-auto block"
-        />
+      <motion.img
+        layout
+        src={photo.url}
+        alt={photo.caption || "Our memory"}
+        loading="lazy"
+        className={`w-full h-full ${isExpanded ? "object-contain bg-black/5" : "object-cover"}`}
+      />
 
-        {/* Hover / tap overlay */}
-        <motion.div
-          initial={false}
-          animate={{ opacity: showCaption ? 1 : 0 }}
-          className="absolute inset-0 bg-gradient-to-t from-rose-900/70 via-rose-900/20 to-transparent
-                     flex flex-col justify-end p-4 transition-opacity
-                     group-hover:opacity-100"
-        >
-          {photo.caption && (
-            <p className="text-white font-body text-sm sm:text-base leading-relaxed">
-              {photo.caption}
-            </p>
-          )}
-          {photo.date && (
-            <p className="text-rose-200 text-xs mt-1">
-              {formatDate(photo.date)}
-            </p>
-          )}
-        </motion.div>
+      {/* Caption overlay — shows when expanded */}
+      <motion.div
+        initial={false}
+        animate={{ opacity: isExpanded ? 1 : 0 }}
+        transition={{ duration: 0.2 }}
+        className="absolute inset-0 bg-gradient-to-t from-rose-900/80 via-transparent to-transparent
+                   flex flex-col justify-end p-2.5 sm:p-4 pointer-events-none"
+      >
+        {photo.caption && (
+          <p className="text-white text-xs sm:text-sm leading-snug line-clamp-3">
+            {photo.caption}
+          </p>
+        )}
+        {photo.date && (
+          <p className="text-rose-200 text-[10px] sm:text-xs mt-0.5">
+            {formatDate(photo.date)}
+          </p>
+        )}
       </motion.div>
     </motion.div>
   );

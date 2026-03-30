@@ -1,16 +1,8 @@
 import { useState, useRef, useCallback } from "react";
-import { signInWithEmailAndPassword, signOut } from "firebase/auth";
-import {
-  collection,
-  addDoc,
-  deleteDoc,
-  doc,
-  Timestamp,
-} from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import exifr from "exifr";
+import imageCompression from "browser-image-compression";
 import { motion, AnimatePresence } from "framer-motion";
-import { auth, db, storage } from "../config/firebase";
+import { supabase } from "../config/supabase";
 import { useAuth } from "../hooks/useAuth";
 import { usePhotos } from "../hooks/usePhotos";
 import ProtectedRoute from "../components/ProtectedRoute";
@@ -27,7 +19,11 @@ function LoginForm() {
     setError("");
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
     } catch (err) {
       setError("Invalid email or password.");
     } finally {
@@ -91,7 +87,7 @@ function LoginForm() {
 }
 
 /* ─── Upload Form ─── */
-function UploadForm() {
+function UploadForm({ onUploaded }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [caption, setCaption] = useState("");
@@ -100,22 +96,37 @@ function UploadForm() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Store extracted EXIF metadata to save to DB (stripped from image on upload)
+  const exifRef = useRef(null);
+
   const handleFile = useCallback(async (selectedFile) => {
     if (!selectedFile || !selectedFile.type.startsWith("image/")) return;
 
     setFile(selectedFile);
     setPreview(URL.createObjectURL(selectedFile));
+    exifRef.current = null;
 
-    // Try to extract EXIF date
+    // Extract all useful EXIF data before compression strips it
     try {
-      const exif = await exifr.parse(selectedFile, ["DateTimeOriginal", "CreateDate"]);
+      const exif = await exifr.parse(selectedFile, [
+        "DateTimeOriginal",
+        "CreateDate",
+        "latitude",
+        "longitude",
+        "Make",
+        "Model",
+      ]);
       if (exif) {
+        exifRef.current = {
+          latitude: exif.latitude ?? null,
+          longitude: exif.longitude ?? null,
+          camera: [exif.Make, exif.Model].filter(Boolean).join(" ") || null,
+        };
+
         const exifDate = exif.DateTimeOriginal || exif.CreateDate;
         if (exifDate) {
           const d = new Date(exifDate);
-          // Format as YYYY-MM-DDTHH:mm for datetime-local input
-          const formatted = d.toISOString().slice(0, 16);
-          setDate(formatted);
+          setDate(d.toISOString().slice(0, 16));
         }
       }
     } catch {
@@ -141,27 +152,50 @@ function UploadForm() {
 
     setUploading(true);
     try {
-      // Upload to Firebase Storage
-      const fileName = `${Date.now()}_${file.name}`;
-      const storageRef = ref(storage, `photos/${fileName}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-
-      // Save to Firestore
-      await addDoc(collection(db, "photos"), {
-        url,
-        caption,
-        date: date ? Timestamp.fromDate(new Date(date)) : Timestamp.now(),
-        fileName,
-        storagePath: `photos/${fileName}`,
-        createdAt: Timestamp.now(),
+      // Compress + strip metadata (max 1200px, under 1MB, EXIF removed)
+      const compressed = await imageCompression(file, {
+        maxWidthOrHeight: 1200,
+        maxSizeMB: 1,
+        useWebWorker: true,
+        exifOrientation: true,  // fix rotation before stripping
       });
+
+      // Upload compressed image to Supabase Storage
+      const fileName = `${Date.now()}_${file.name}`;
+      const storagePath = `photos/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("photos")
+        .upload(fileName, compressed);
+      if (uploadError) throw uploadError;
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("photos").getPublicUrl(fileName);
+
+      // Save to Supabase database (metadata extracted before stripping)
+      const meta = exifRef.current;
+      const { error: insertError } = await supabase.from("photos").insert({
+        url: publicUrl,
+        caption,
+        date: date ? new Date(date).toISOString() : new Date().toISOString(),
+        file_name: fileName,
+        storage_path: storagePath,
+        latitude: meta?.latitude,
+        longitude: meta?.longitude,
+        camera: meta?.camera,
+      });
+      if (insertError) throw insertError;
+
+      // Refresh photo list immediately
+      onUploaded?.();
 
       // Reset form
       setFile(null);
       setPreview(null);
       setCaption("");
       setDate("");
+      exifRef.current = null;
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       console.error("Upload failed:", err);
@@ -172,8 +206,13 @@ function UploadForm() {
   }
 
   return (
-    <form onSubmit={handleUpload} className="bg-white/60 backdrop-blur-sm rounded-2xl shadow-lg shadow-rose-100 p-6 mb-8">
-      <h2 className="font-display text-xl text-rose-500 mb-4 italic">Add a Memory</h2>
+    <form
+      onSubmit={handleUpload}
+      className="bg-white/60 backdrop-blur-sm rounded-2xl shadow-lg shadow-rose-100 p-6 mb-8"
+    >
+      <h2 className="font-display text-xl text-rose-500 mb-4 italic">
+        Add a Memory
+      </h2>
 
       {/* Drop zone */}
       <div
@@ -185,7 +224,11 @@ function UploadForm() {
           ${dragOver ? "border-rose-400 bg-rose-50" : "border-rose-200 hover:border-rose-300"}`}
       >
         {preview ? (
-          <img src={preview} alt="Preview" className="max-h-48 mx-auto rounded-lg" />
+          <img
+            src={preview}
+            alt="Preview"
+            className="max-h-48 mx-auto rounded-lg"
+          />
         ) : (
           <div>
             <p className="text-rose-400 text-lg mb-1">Drop a photo here</p>
@@ -242,8 +285,7 @@ function UploadForm() {
 }
 
 /* ─── Photo List (manage existing) ─── */
-function PhotoList() {
-  const { photos, loading } = usePhotos();
+function PhotoList({ photos, loading, onChanged }) {
   const [deleting, setDeleting] = useState(null);
 
   async function handleDelete(photo) {
@@ -252,12 +294,16 @@ function PhotoList() {
     setDeleting(photo.id);
     try {
       // Delete from Storage
-      if (photo.storagePath) {
-        const storageRef = ref(storage, photo.storagePath);
-        await deleteObject(storageRef).catch(() => {});
+      if (photo.file_name) {
+        await supabase.storage.from("photos").remove([photo.file_name]);
       }
-      // Delete from Firestore
-      await deleteDoc(doc(db, "photos", photo.id));
+      // Delete from database
+      const { error } = await supabase
+        .from("photos")
+        .delete()
+        .eq("id", photo.id);
+      if (error) throw error;
+      onChanged?.();
     } catch (err) {
       console.error("Delete failed:", err);
       alert("Failed to delete. Please try again.");
@@ -296,8 +342,8 @@ function PhotoList() {
                   {photo.caption || "No caption"}
                 </p>
                 <p className="text-xs text-rose-300">
-                  {photo.date?.toDate
-                    ? photo.date.toDate().toLocaleDateString()
+                  {photo.date
+                    ? new Date(photo.date).toLocaleDateString()
                     : "No date"}
                 </p>
               </div>
@@ -328,23 +374,25 @@ export default function AdminPage() {
 }
 
 function AdminDashboard() {
+  const { photos, loading, refetch } = usePhotos();
+
   return (
     <div className="min-h-screen py-8 px-4">
       <div className="max-w-lg mx-auto">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="font-display text-2xl text-rose-500 italic">
+          <a href="/" className="font-display text-2xl text-rose-500 italic hover:text-rose-600 transition-colors">
             Our Scrapbook
-          </h1>
+          </a>
           <button
-            onClick={() => signOut(auth)}
+            onClick={() => supabase.auth.signOut()}
             className="text-sm text-rose-400 hover:text-rose-600 transition-colors"
           >
             Sign Out
           </button>
         </div>
 
-        <UploadForm />
-        <PhotoList />
+        <UploadForm onUploaded={refetch} />
+        <PhotoList photos={photos} loading={loading} onChanged={refetch} />
       </div>
     </div>
   );

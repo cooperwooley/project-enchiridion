@@ -1,25 +1,38 @@
-import { useState, useEffect } from "react";
-import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "../config/supabase";
 
 export function usePhotos() {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const q = query(collection(db, "photos"), orderBy("date", "asc"));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setPhotos(data);
-      setLoading(false);
-    });
-
-    return unsubscribe;
+  const refetch = useCallback(async () => {
+    const { data } = await supabase
+      .from("photos")
+      .select("*")
+      .order("date", { ascending: true });
+    setPhotos(data || []);
+    setLoading(false);
   }, []);
 
-  return { photos, loading };
+  useEffect(() => {
+    refetch();
+
+    // Real-time subscription (requires Realtime enabled on the table in Supabase dashboard)
+    const channel = supabase
+      .channel("photos-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "photos" },
+        () => {
+          refetch();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refetch]);
+
+  return { photos, loading, refetch };
 }
