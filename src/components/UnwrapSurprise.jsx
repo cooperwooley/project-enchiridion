@@ -73,14 +73,17 @@ export default function UnwrapSurprise({ onComplete }) {
   const [showContent, setShowContent] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isPreview = params.get("preview") === "unwrap";
+
     const alreadyUnwrapped = sessionStorage.getItem("gift-unwrapped");
-    if (alreadyUnwrapped) {
+    if (alreadyUnwrapped && !isPreview) {
       onComplete();
       return;
     }
 
     const now = new Date();
-    if (now >= SURPRISE_START && now < SURPRISE_END) {
+    if (isPreview || (now >= SURPRISE_START && now < SURPRISE_END)) {
       setIsInWindow(true);
     } else {
       onComplete();
