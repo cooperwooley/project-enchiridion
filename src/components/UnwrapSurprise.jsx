@@ -2,18 +2,19 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SURPRISE_START, SURPRISE_END } from "../config/constants";
 
-function FloatingHeart({ delay, x }) {
+function FloatingHeart({ delay, left, sway }) {
   return (
     <motion.span
-      className="absolute text-rose-300 text-2xl pointer-events-none select-none"
-      initial={{ opacity: 0, y: 0, x }}
+      className="absolute bottom-0 text-rose-300/60 pointer-events-none select-none"
+      style={{ left: `${left}%`, fontSize: `${14 + Math.random() * 14}px` }}
+      initial={{ opacity: 0, y: 0, x: 0 }}
       animate={{
-        opacity: [0, 1, 1, 0],
-        y: [0, -120, -240, -360],
-        x: [x, x + 20, x - 10, x + 15],
+        opacity: [0, 0.8, 0.8, 0],
+        y: [0, "-30vh", "-65vh", "-100vh"],
+        x: [0, sway, -sway * 0.6, sway * 0.4],
       }}
       transition={{
-        duration: 4,
+        duration: 5 + Math.random() * 3,
         repeat: Infinity,
         delay,
         ease: "easeOut",
@@ -114,11 +115,12 @@ export default function UnwrapSurprise({ onComplete }) {
         >
           {/* Floating hearts background */}
           <div className="absolute inset-0 overflow-hidden">
-            {[...Array(8)].map((_, i) => (
+            {[...Array(10)].map((_, i) => (
               <FloatingHeart
                 key={i}
-                delay={i * 0.6}
-                x={Math.random() * 300 - 150}
+                delay={i * 0.7}
+                left={5 + (i / 10) * 90 + (i % 2 === 0 ? 3 : -3)}
+                sway={15 + (i % 3) * 10}
               />
             ))}
           </div>
